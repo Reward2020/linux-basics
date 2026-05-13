@@ -1,0 +1,18 @@
+[Unit]
+Description=Log Monitor Service for logmonitor
+After=network.target
+
+[Service]
+Type=simple
+User=logmonitor
+Group=adm
+EnvironmentFile=/etc/logmonitor.conf
+ExecStart=/usr/local/bin/log_monitor.sh
+Restart=on-failure
+RestartSec=5
+WorkingDirectory=%h
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
