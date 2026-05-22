@@ -1,0 +1,8 @@
+services:
+  game-2048:
+    image: nginx:alpine
+    ports:
+      - '8082:80'
+    volumes:
+      - ./game_code:/usr/share/nginx/html
+    restart: always
