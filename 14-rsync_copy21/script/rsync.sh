@@ -15,35 +15,51 @@ generate_function_json() {
   local base_name=$(basename "$conf_file" .conf)
   local output_json="${CONFIG_DIR}/function_${base_name}.json"
 
-  declare -A env_vars
+  # echo "{" > "$output_json" — починаємо формувати JSON-об’єкт
+  echo "{" > "$output_json"
+  # first=1 потрібна, щоб правильно розставити коми між полями JSON
+  local first=1
 
-  while IFS='=' read -r key value; do
-    [[ -z "$key" || "$key" =~ ^# ]] && continue
-    env_vars[$key]=$value
+  while IFS= read -r line; do
+    # Пропускаємо порожні рядки та коментарі
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
+
+    key="${line%%=*}"
+    value="${line#*=}"
+
+    if [ "$key" = "LABELS" ]; then
+      # Формуємо labels як вкладений об'єкт
+      if [ $first -eq 0 ]; then
+        echo "," >> "$output_json"
+      fi
+      echo -n '  "labels": {' >> "$output_json"
+
+      IFS=',' read -ra label_pairs <<< "$value"
+      local label_first=1
+      for pair in "${label_pairs[@]}"; do
+        label_key="${pair%%=*}"
+        label_value="${pair#*=}"
+        if [ $label_first -eq 0 ]; then
+          echo -n "," >> "$output_json"
+        fi
+        echo -n "\"$label_key\":\"$label_value\"" >> "$output_json"
+        # Після першого поля first стає 0, і перед наступними полями додається кома.
+        label_first=0
+      done
+
+      echo -n "}" >> "$output_json"
+    else
+      if [ $first -eq 0 ]; then
+        echo "," >> "$output_json"
+      fi
+      echo -n "  \"$key\":\"$value\"" >> "$output_json"
+    fi
+
+    first=0
   done < "$conf_file"
 
-  json_parts=()
-  for key in "${!env_vars[@]}"; do
-    if [[ "$key" == "LABELS" ]]; then
-      IFS=',' read -ra label_pairs <<< "${env_vars[LABELS]}"
-      labels_json_parts=()
-      for pair in "${label_pairs[@]}"; do
-        IFS='=' read -ra kv <<< "$pair"
-        k="${kv[0]}"
-        v="${kv[1]}"
-        labels_json_parts+=("\"$k\":\"$v\"")
-      done
-      labels_json="{$(IFS=,; echo "${labels_json_parts[*]}")}"
-      json_parts+=("\"labels\": $labels_json")
-    else
-      val="${env_vars[$key]}"
-      json_parts+=("\"$key\": \"$val\"")
-    fi
-  done
+  echo -e "\n}" >> "$output_json"
 
-  json_content="{$(IFS=,; echo "${json_parts[*]}")}"
-
-  echo "$json_content" > "$output_json"
   echo "Згенеровано $output_json:"
   cat "$output_json"
   echo
@@ -67,13 +83,13 @@ scp "$CONFIG_DIR"/function_*.json ${REMOTE_HOST}:${REMOTE_PATH}/
 # rsync -av "$CONFIG_DIR"/function_*.json ${REMOTE_HOST}:${REMOTE_PATH}/
 
 echo -e "\n--- Dry-run: Перевірка файлів для синхронізації ---"
-rsync -av --dry-run --exclude='.git/' --exclude='node_modules/' "$WATCH_DIR/" ${REMOTE_HOST}:${REMOTE_PATH}/rsync/
+rsync -av --dry-run --exclude='.git/' --exclude='node_modules/' "$WATCH_DIR/" ${REMOTE_HOST}:${REMOTE_PATH}/rsync
 
 read -p "Виконати реальну синхронізацію? (y/N): " CONFIRM
 
 if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
   echo "Виконуємо деплой..."
-  rsync -av --exclude='.git/' --exclude='node_modules/' "$WATCH_DIR/" ${REMOTE_HOST}:${REMOTE_PATH}/rsync/
+  rsync -av --exclude='.git/' --exclude='node_modules/' "$WATCH_DIR/" ${REMOTE_HOST}:${REMOTE_PATH}/rsync
   echo "Деплой завершено."
 else
   echo "Деплой скасовано."
