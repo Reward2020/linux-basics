@@ -1,0 +1,94 @@
+include:
+  - project: "gitlab/cicd-templates"
+    ref: "master"
+    file:
+      - "gcp/common_templates/.utils.yml"
+
+variables:
+  ARTIFACT_ID: "${CI_PROJECT_NAME}"
+  ARTIFACT_EXT: "tar.gz"
+  FEATURE_ARTIFACT_EVIDENCE: "enabled"
+
+image:
+  name: us-docker.pkg.dev/<PROJECT>/<REGESTRY>/builder-python-pip:3.11-24.0
+
+stages:
+  - dry_run_INFRA
+  - sync_INFRA
+
+.dry_run_per_env_infra:
+  before_script:
+    - !reference [.utils_logging, script]
+  script:
+    - |
+      ###
+      log_info "Run commands in the dry-run mode"
+      if [[ "${SCOPE}" == "infra" ]]; then
+          find ./env ! -name "${ENV}-${SCOPE}.conf" ! -name "infra.conf" -type f | xargs rm
+          gsutil rsync -r -d -n -c -x "^.*(?<!${SCOPE}.conf)$" env gs://<BUCKET>/env
+      else
+          find ./env ! -name "${ENV}-${SCOPE}.conf" -type f | xargs rm
+          gsutil rsync -r -d -n -c -x "^.*(?<!-${SCOPE}.conf)$" env gs://<BUCKET>/env
+      fi
+
+      CONFIG_SERVER_URL=$(gcloud run services describe <CONFIG-SERVER> --platform managed --region us-east4 --format 'value(status.url)' --project <PROJECT>)
+      log_info "CONFIG_SERVER_URL: ${GREEN}${CONFIG_SERVER_URL}${ENDCOLOR}"
+  when: manual
+
+.sync_per_env_infra:
+  before_script:
+    - !reference [.utils_logging, script]
+  script:
+    - |
+      ###
+      if [[ "${SCOPE}" == "infra" ]]; then
+          find ./env ! -name "${ENV}-${SCOPE}.conf" ! -name "infra.conf" -type f | xargs rm
+          gsutil rsync -r -d -c -x "^.*(?<!${SCOPE}.conf)$" env gs://<BUCKET>/env
+      else
+          find ./env ! -name "${ENV}-${SCOPE}.conf"  -type f | xargs rm
+          gsutil rsync -r -d -c -x "^.*(?<!-${SCOPE}.conf)$" env gs://<BUCKET>/env
+      fi
+      log_info "Clean the Config Server cache"
+      CONFIG_SERVER_URL=$(gcloud run services describe <CONFIG-SERVER> --platform managed --region us-east4 --format 'value(status.url)' --project <PROJECT>)
+      log_info "CONFIG_SERVER_URL: ${GREEN}${CONFIG_SERVER_URL}${ENDCOLOR}"
+
+      curl_result=$(curl -m 5 -w "%{http_code}" -X DELETE  -H "Authorization: Bearer $(gcloud auth print-identity-token)" $CONFIG_SERVER_URL/cleanCache)
+      log_info "curl exit code: $?"
+      log_info "Result of cache clean: $curl_result"
+  when: manual
+
+#===============================================================================
+# CD flow
+#===============================================================================
+
+
+# Jobs for dev environment
+
+dry_run_dev_INFRA:
+  stage: dry_run_INFRA
+  extends: .dry_run_per_env_infra
+  variables:
+    FOLDER: infra
+    PHI: nprd
+    BUCKET: devplatformconfig
+    CS: devcs
+    ENV: dev
+    SCOPE: infra
+  tags: [nprd, gcp]
+
+sync_dev_INFRA:
+  stage: sync_INFRA
+  extends: .sync_per_env_infra
+  variables:
+    FOLDER: infra
+    PHI: nprd
+    BUCKET: devplatformconfig
+    CS: devcs
+    ENV: dev
+    SCOPE: infra
+  needs:
+    - job: dry_run_dev_INFRA
+  environment:
+    name: infra-dev
+    deployment_tier: development
+  tags: [nprd, gcp]
